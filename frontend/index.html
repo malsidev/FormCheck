@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FormCheck</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">FC</div>
+          <div>
+            <p class="eyebrow">Computer Vision</p>
+            <h1>FormCheck</h1>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Проверка техники</h2>
+          <form id="analysis-form" class="form-panel">
+            <label for="exercise">Упражнение</label>
+            <select id="exercise" name="exercise"></select>
+
+            <label for="video-file" class="upload-label">Видео или фото</label>
+            <input id="video-file" type="file" accept="image/*,video/*" required />
+
+            <button type="submit">Проверить технику</button>
+          </form>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Текущий анализ</p>
+            <h2>Результат</h2>
+          </div>
+        </header>
+
+        <section id="result-card" class="result-card neutral">
+          <div class="score-row">
+            <span class="score-label">Оценка</span>
+            <strong id="score-value">—</strong>
+          </div>
+          <p id="status-text">Загрузите видео или фото, чтобы начать проверку.</p>
+          <p id="message-text" class="muted">
+            Система оценивает положение тела, локтей, коленей и выравнивание корпуса по ключевым точкам.
+          </p>
+        </section>
+
+        <section class="details-panel">
+          <h3>Детали анализа</h3>
+          <div id="details-grid" class="details-grid">
+            <div class="detail-item">
+              <span>Статус</span>
+              <strong id="detail-status">—</strong>
+            </div>
+            <div class="detail-item">
+              <span>Файл</span>
+              <strong id="detail-file">—</strong>
+            </div>
+            <div class="detail-item">
+              <span>Упражнение</span>
+              <strong id="detail-exercise">—</strong>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
