@@ -26,6 +26,8 @@ def test_squat_pose_detects_good_form():
     result = evaluate_squat_pose(landmarks)
     assert result["status"] in {"good", "warning"}
     assert result["score"] >= 0
+    assert "advice" in result
+    assert isinstance(result["advice"], list)
 
 
 def test_pushup_pose_detects_alignment_issue():
@@ -43,3 +45,5 @@ def test_pushup_pose_detects_alignment_issue():
     result = evaluate_pushup_pose(landmarks)
     assert result["status"] in {"good", "warning", "bad"}
     assert "score" in result
+    assert "advice" in result
+    assert result["advice"]

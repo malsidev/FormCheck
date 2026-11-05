@@ -11,8 +11,17 @@
 
 ## Как запустить
 
+Если проект уже лежит локально в папке, перейдите в корень репозитория и выполните:
+
 ```bash
-cd /home/malsi/FormCheck
+cd /path/to/FormCheck
+. vision/.venv/bin/activate
+uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+Если вы находитесь прямо в папке проекта, достаточно:
+
+```bash
 . vision/.venv/bin/activate
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```

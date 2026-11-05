@@ -86,7 +86,13 @@ def _detect_pose_landmarks(image: Any) -> Dict[str, Tuple[float, float]]:
     return mapped
 
 
-def _finalize_result(score: float, details: Dict[str, Any], default_message: str) -> Dict[str, Any]:
+def _finalize_result(
+    score: float,
+    details: Dict[str, Any],
+    default_message: str,
+    issues: List[str] | None = None,
+    advice: List[str] | None = None,
+) -> Dict[str, Any]:
     if score >= 85:
         status = "good"
     elif score >= 60:
@@ -98,8 +104,48 @@ def _finalize_result(score: float, details: Dict[str, Any], default_message: str
         "status": status,
         "score": round(score, 1),
         "message": default_message,
+        "issues": issues or [],
+        "advice": advice or [],
         "details": details,
     }
+
+
+def _squat_advice(details: Dict[str, Any]) -> List[str]:
+    advice: List[str] = []
+    average_knee_angle = details.get("average_knee_angle", 0)
+    alignment_offset = details.get("alignment_offset", 0)
+
+    if average_knee_angle < 85:
+        advice.append("Не ускоряйте движение: опускайтесь глубже, сохраняя ровную спину и контролируемые колени.")
+    elif average_knee_angle > 170:
+        advice.append("Контролируйте глубину приседа: не уходите слишком низко, чтобы не терять устойчивость и не перегружать колени.")
+
+    if alignment_offset > 0.15:
+        advice.append("Выровняйте таз и плечи: держите грудь вверх и не наклоняйте корпус в сторону.")
+
+    if not advice:
+        advice.append("Техника приседа выглядит устойчиво: сохраняйте ровный корпус и равномерное движение по всей амплитуде.")
+
+    return advice
+
+
+def _pushup_advice(details: Dict[str, Any]) -> List[str]:
+    advice: List[str] = []
+    average_elbow_angle = details.get("average_elbow_angle", 0)
+    alignment_offset = details.get("alignment_offset", 0)
+
+    if average_elbow_angle < 90:
+        advice.append("Локти слишком сильно согнуты: опускайтесь плавнее и держите корпус прямой линией.")
+    elif average_elbow_angle > 160:
+        advice.append("Локти почти полностью выпрямлены — контролируйте глубину отжимания и не теряйте стабильность корпуса.")
+
+    if alignment_offset > 0.12:
+        advice.append("Проверьте выравнивание тела: плечи, таз и пятки должны находиться на одной линии.")
+
+    if not advice:
+        advice.append("Техника отжиманий в норме: сохраняйте прямую линию корпуса и контролируемое движение локтей.")
+
+    return advice
 
 
 def evaluate_squat_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
@@ -140,8 +186,16 @@ def evaluate_squat_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, 
         "alignment_offset": round(alignment_offset, 3),
     }
 
+    issues: List[str] = []
+    if knee_angle < 85:
+        issues.append("Недостаточная глубина приседа")
+    if knee_angle > 170:
+        issues.append("Потеря контроля в нижней точке")
+    if alignment_offset > 0.15:
+        issues.append("Корпус отклоняется в сторону")
+
     message = "Техника приседа в норме" if score >= 80 else "Есть отклонения в глубине или выравнивании корпуса"
-    return _finalize_result(max(0.0, score), details, message)
+    return _finalize_result(max(0.0, score), details, message, issues=issues, advice=_squat_advice(details))
 
 
 def evaluate_pushup_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
@@ -183,8 +237,16 @@ def evaluate_pushup_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str,
         "alignment_offset": round(alignment_offset, 3),
     }
 
+    issues: List[str] = []
+    if elbow_angle < 90:
+        issues.append("Локти слишком сильно согнуты")
+    if elbow_angle > 160:
+        issues.append("Неполная амплитуда отжимания")
+    if alignment_offset > 0.12:
+        issues.append("Тело перекошено")
+
     message = "Техника отжиманий нормальная" if score >= 80 else "Проверьте положение корпуса и локтей"
-    return _finalize_result(max(0.0, score), details, message)
+    return _finalize_result(max(0.0, score), details, message, issues=issues, advice=_pushup_advice(details))
 
 
 def analyze_pose_landmarks(landmarks: Dict[str, Tuple[float, float]], exercise: str) -> Dict[str, Any]:
