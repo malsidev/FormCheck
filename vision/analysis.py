@@ -6,7 +6,7 @@ import cv2
 import mediapipe as mp
 
 
-SUPPORTED_EXERCISES = ("squat", "push-up", "pushup")
+SUPPORTED_EXERCISES = ("squat", "push-up", "pushup", "plank", "lunge", "lunges", "deadlift")
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "pose_landmarker.task"
 
 
@@ -38,6 +38,23 @@ def _average(values: Iterable[float]) -> float:
     if not values:
         return 0.0
     return sum(values) / len(values)
+
+
+def _normalize_exercise_key(exercise: str) -> str:
+    return (exercise or "auto").lower().replace("_", "-")
+
+
+def _exercise_label(exercise: str) -> str:
+    labels = {
+        "squat": "присед",
+        "push-up": "отжимания",
+        "pushup": "отжимания",
+        "plank": "планка",
+        "lunge": "выпад",
+        "lunges": "выпад",
+        "deadlift": "тяга",
+    }
+    return labels.get(_normalize_exercise_key(exercise), exercise or "упражнение")
 
 
 def _detect_pose_landmarks(image: Any) -> Dict[str, Tuple[float, float]]:
@@ -148,6 +165,57 @@ def _pushup_advice(details: Dict[str, Any]) -> List[str]:
     return advice
 
 
+def _plank_advice(details: Dict[str, Any]) -> List[str]:
+    advice: List[str] = []
+    body_angle = details.get("body_angle", 0)
+    alignment_offset = details.get("alignment_offset", 0)
+
+    if body_angle < 160:
+        advice.append("Корпус слишком согнут: держите линию тела прямой от плеч до пяток.")
+    if alignment_offset > 0.14:
+        advice.append("Проверьте, чтобы таз и плечи не уходили в сторону — тело должно быть ровным.")
+
+    if not advice:
+        advice.append("Планка выполнена ровно: сохраняйте нейтральное положение спины и напряжение корпуса.")
+
+    return advice
+
+
+def _lunge_advice(details: Dict[str, Any]) -> List[str]:
+    advice: List[str] = []
+    average_knee_angle = details.get("average_knee_angle", 0)
+    alignment_offset = details.get("alignment_offset", 0)
+
+    if average_knee_angle < 70:
+        advice.append("Глубина выпада недостаточная: опускайтесь устойчиво и не теряйте контроль над коленом.")
+    elif average_knee_angle > 160:
+        advice.append("Колено слишком выпрямлено: контролируйте движение и немного увеличивайте глубину, если сохраняется баланс.")
+
+    if alignment_offset > 0.12:
+        advice.append("Старайтесь держать корпус вертикально и не заваливаться в сторону.")
+
+    if not advice:
+        advice.append("Выпад выполнен стабильно: сохраняйте одинаковую глубину и ровную спину.")
+
+    return advice
+
+
+def _deadlift_advice(details: Dict[str, Any]) -> List[str]:
+    advice: List[str] = []
+    body_angle = details.get("body_angle", 0)
+    knee_angle = details.get("average_knee_angle", 0)
+
+    if body_angle < 120:
+        advice.append("Спина слишком округлена: держите грудь поднятой и таз под контролем.")
+    if knee_angle > 160:
+        advice.append("Колени почти полностью выпрямлены — поддерживайте небольшое сгибание и плавно поднимайте корпус.")
+
+    if not advice:
+        advice.append("Тяга выглядит безопасно: держите нейтральную спину, ровный корпус и контролируемый подъём.")
+
+    return advice
+
+
 def evaluate_squat_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
     left_hip = _resolve_landmark(landmarks, "left_hip", "hip_left")
     left_knee = _resolve_landmark(landmarks, "left_knee", "knee_left")
@@ -249,13 +317,295 @@ def evaluate_pushup_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str,
     return _finalize_result(max(0.0, score), details, message, issues=issues, advice=_pushup_advice(details))
 
 
-def analyze_pose_landmarks(landmarks: Dict[str, Tuple[float, float]], exercise: str) -> Dict[str, Any]:
-    exercise_key = exercise.lower().replace("_", "-")
+def evaluate_plank_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
+    left_shoulder = _resolve_landmark(landmarks, "left_shoulder", "shoulder_left")
+    left_hip = _resolve_landmark(landmarks, "left_hip", "hip_left")
+    left_ankle = _resolve_landmark(landmarks, "left_ankle", "ankle_left")
+    right_shoulder = _resolve_landmark(landmarks, "right_shoulder", "shoulder_right")
+    right_hip = _resolve_landmark(landmarks, "right_hip", "hip_right")
+    right_ankle = _resolve_landmark(landmarks, "right_ankle", "ankle_right")
+
+    if not all([left_shoulder, left_hip, left_ankle, right_shoulder, right_hip, right_ankle]):
+        return {"status": "bad", "score": 0, "message": "Недостаточно точек для оценки планки", "details": {}}
+
+    left_angle = calculate_angle(left_shoulder, left_hip, left_ankle)
+    right_angle = calculate_angle(right_shoulder, right_hip, right_ankle)
+    body_angle = _average([left_angle, right_angle])
+
+    shoulder_center_x = (left_shoulder[0] + right_shoulder[0]) / 2
+    hip_center_x = (left_hip[0] + right_hip[0]) / 2
+    ankle_center_x = (left_ankle[0] + right_ankle[0]) / 2
+    alignment_offset = abs(shoulder_center_x - hip_center_x) + abs(hip_center_x - ankle_center_x)
+
+    score = 100.0
+    if body_angle < 160:
+        score -= 30
+    if alignment_offset > 0.18:
+        score -= 25
+
+    details = {
+        "left_body_angle": round(left_angle, 1),
+        "right_body_angle": round(right_angle, 1),
+        "body_angle": round(body_angle, 1),
+        "alignment_offset": round(alignment_offset, 3),
+    }
+
+    issues: List[str] = []
+    if body_angle < 160:
+        issues.append("Корпус прогнут или потерял прямую линию")
+    if alignment_offset > 0.18:
+        issues.append("Тело перекошено относительно таза и ног")
+
+    message = "Планка выполнена ровно" if score >= 80 else "Проверьте прямую линию корпуса"
+    return _finalize_result(max(0.0, score), details, message, issues=issues, advice=_plank_advice(details))
+
+
+def evaluate_lunge_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
+    left_hip = _resolve_landmark(landmarks, "left_hip", "hip_left")
+    left_knee = _resolve_landmark(landmarks, "left_knee", "knee_left")
+    left_ankle = _resolve_landmark(landmarks, "left_ankle", "ankle_left")
+    right_hip = _resolve_landmark(landmarks, "right_hip", "hip_right")
+    right_knee = _resolve_landmark(landmarks, "right_knee", "knee_right")
+    right_ankle = _resolve_landmark(landmarks, "right_ankle", "ankle_right")
+    left_shoulder = _resolve_landmark(landmarks, "left_shoulder", "shoulder_left")
+    right_shoulder = _resolve_landmark(landmarks, "right_shoulder", "shoulder_right")
+
+    if not all([left_hip, left_knee, left_ankle, right_hip, right_knee, right_ankle]):
+        return {"status": "bad", "score": 0, "message": "Недостаточно точек для оценки выпада", "details": {}}
+
+    left_angle = calculate_angle(left_hip, left_knee, left_ankle)
+    right_angle = calculate_angle(right_hip, right_knee, right_ankle)
+    knee_angle = _average([left_angle, right_angle])
+
+    hip_center_x = (left_hip[0] + right_hip[0]) / 2
+    shoulder_center_x = 0.0
+    if left_shoulder and right_shoulder:
+        shoulder_center_x = (left_shoulder[0] + right_shoulder[0]) / 2
+    alignment_offset = abs(hip_center_x - shoulder_center_x)
+
+    score = 100.0
+    if knee_angle < 70 or knee_angle > 170:
+        score -= 30
+    if knee_angle < 90:
+        score -= 15
+    if alignment_offset > 0.12:
+        score -= 20
+
+    details = {
+        "left_knee_angle": round(left_angle, 1),
+        "right_knee_angle": round(right_angle, 1),
+        "average_knee_angle": round(knee_angle, 1),
+        "alignment_offset": round(alignment_offset, 3),
+    }
+
+    issues: List[str] = []
+    if knee_angle < 90:
+        issues.append("Недостаточная глубина выпада")
+    if knee_angle > 170:
+        issues.append("Колени чрезмерно выпрямлены")
+    if alignment_offset > 0.12:
+        issues.append("Корпус смещён в сторону")
+
+    message = "Выпад выполнен уверенно" if score >= 80 else "Проверьте глубину и симметрию выпада"
+    return _finalize_result(max(0.0, score), details, message, issues=issues, advice=_lunge_advice(details))
+
+
+def evaluate_deadlift_pose(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
+    left_shoulder = _resolve_landmark(landmarks, "left_shoulder", "shoulder_left")
+    left_hip = _resolve_landmark(landmarks, "left_hip", "hip_left")
+    left_knee = _resolve_landmark(landmarks, "left_knee", "knee_left")
+    left_ankle = _resolve_landmark(landmarks, "left_ankle", "ankle_left")
+    right_shoulder = _resolve_landmark(landmarks, "right_shoulder", "shoulder_right")
+    right_hip = _resolve_landmark(landmarks, "right_hip", "hip_right")
+    right_knee = _resolve_landmark(landmarks, "right_knee", "knee_right")
+    right_ankle = _resolve_landmark(landmarks, "right_ankle", "ankle_right")
+
+    if not all([left_shoulder, left_hip, left_knee, left_ankle, right_shoulder, right_hip, right_knee, right_ankle]):
+        return {"status": "bad", "score": 0, "message": "Недостаточно точек для оценки мёртвой тяги", "details": {}}
+
+    left_back_angle = calculate_angle(left_shoulder, left_hip, left_knee)
+    right_back_angle = calculate_angle(right_shoulder, right_hip, right_knee)
+    body_angle = _average([left_back_angle, right_back_angle])
+    knee_angle = _average([
+        calculate_angle(left_hip, left_knee, left_ankle),
+        calculate_angle(right_hip, right_knee, right_ankle),
+    ])
+
+    score = 100.0
+    if body_angle < 120:
+        score -= 30
+    if body_angle > 170:
+        score -= 20
+    if knee_angle > 160:
+        score -= 20
+
+    details = {
+        "left_back_angle": round(left_back_angle, 1),
+        "right_back_angle": round(right_back_angle, 1),
+        "body_angle": round(body_angle, 1),
+        "average_knee_angle": round(knee_angle, 1),
+    }
+
+    issues: List[str] = []
+    if body_angle < 120:
+        issues.append("Спина слишком округлена")
+    if body_angle > 170:
+        issues.append("Тело слишком вертикально, похожее на присед")
+    if knee_angle > 160:
+        issues.append("Колени слишком выпрямлены")
+
+    message = "Техника тяги в норме" if score >= 80 else "Поддерживайте нейтральную спину и контролируемое движение"
+    return _finalize_result(max(0.0, score), details, message, issues=issues, advice=_deadlift_advice(details))
+
+
+def _evaluate_exercise_by_key(landmarks: Dict[str, Tuple[float, float]], exercise_key: str) -> Dict[str, Any]:
     if exercise_key == "squat":
         return evaluate_squat_pose(landmarks)
     if exercise_key in {"push-up", "pushup"}:
         return evaluate_pushup_pose(landmarks)
-    raise ValueError(f"Не поддерживаемое упражнение: {exercise}")
+    if exercise_key == "plank":
+        return evaluate_plank_pose(landmarks)
+    if exercise_key in {"lunge", "lunges"}:
+        return evaluate_lunge_pose(landmarks)
+    if exercise_key == "deadlift":
+        return evaluate_deadlift_pose(landmarks)
+    raise ValueError(f"Не поддерживаемое упражнение: {exercise_key}")
+
+
+def detect_best_exercise(landmarks: Dict[str, Tuple[float, float]]) -> Dict[str, Any]:
+    left_shoulder = _resolve_landmark(landmarks, "left_shoulder", "shoulder_left")
+    right_shoulder = _resolve_landmark(landmarks, "right_shoulder", "shoulder_right")
+    left_hip = _resolve_landmark(landmarks, "left_hip", "hip_left")
+    right_hip = _resolve_landmark(landmarks, "right_hip", "hip_right")
+    left_knee = _resolve_landmark(landmarks, "left_knee", "knee_left")
+    right_knee = _resolve_landmark(landmarks, "right_knee", "knee_right")
+    left_ankle = _resolve_landmark(landmarks, "left_ankle", "ankle_left")
+    right_ankle = _resolve_landmark(landmarks, "right_ankle", "ankle_right")
+    left_elbow = _resolve_landmark(landmarks, "left_elbow", "elbow_left")
+    right_elbow = _resolve_landmark(landmarks, "right_elbow", "elbow_right")
+    left_wrist = _resolve_landmark(landmarks, "left_wrist", "wrist_left")
+    right_wrist = _resolve_landmark(landmarks, "right_wrist", "wrist_right")
+
+    scores: Dict[str, float] = {}
+
+    if left_knee and right_knee and left_ankle and right_ankle:
+        squat_score = 0.0
+        knee_angle = _average([
+            calculate_angle(left_hip, left_knee, left_ankle) if left_hip else 0,
+            calculate_angle(right_hip, right_knee, right_ankle) if right_hip else 0,
+        ]) if left_hip and right_hip else 0.0
+        squat_score += max(0.0, 60.0 - abs(knee_angle - 110.0) * 0.6)
+        if left_shoulder and right_shoulder and left_hip and right_hip:
+            shoulder_center_x = (left_shoulder[0] + right_shoulder[0]) / 2
+            hip_center_x = (left_hip[0] + right_hip[0]) / 2
+            squat_score += max(0.0, 25.0 - abs(hip_center_x - shoulder_center_x) * 100)
+        if not (left_elbow and right_elbow and left_wrist and right_wrist):
+            squat_score = max(squat_score, 90.0)
+        scores["squat"] = squat_score
+
+        if not (left_elbow and right_elbow and left_wrist and right_wrist):
+            scores["lunge"] = max(scores.get("lunge", 0.0), 80.0)
+            if "plank" in scores:
+                scores["plank"] = min(scores["plank"], 55.0)
+
+    if left_hip and right_hip and left_knee and right_knee and left_ankle and right_ankle:
+        lunge_score = 0.0
+        knee_angle = _average([
+            calculate_angle(left_hip, left_knee, left_ankle) if left_hip else 0,
+            calculate_angle(right_hip, right_knee, right_ankle) if right_hip else 0,
+        ]) if left_hip and right_hip else 0.0
+        lunge_score += max(0.0, 55.0 - abs(knee_angle - 100.0) * 0.7)
+        if left_shoulder and right_shoulder:
+            shoulder_center_x = (left_shoulder[0] + right_shoulder[0]) / 2
+            hip_center_x = (left_hip[0] + right_hip[0]) / 2
+            lunge_score += max(0.0, 20.0 - abs(hip_center_x - shoulder_center_x) * 80)
+        scores["lunge"] = lunge_score
+
+    if left_shoulder and right_shoulder and left_hip and right_hip and left_ankle and right_ankle:
+        body_angle = _average([
+            calculate_angle(left_shoulder, left_hip, left_ankle) if left_shoulder and left_hip and left_ankle else 0,
+            calculate_angle(right_shoulder, right_hip, right_ankle) if right_shoulder and right_hip and right_ankle else 0,
+        ])
+        alignment_offset = abs(((left_shoulder[0] + right_shoulder[0]) / 2) - ((left_hip[0] + right_hip[0]) / 2)) + abs(((left_hip[0] + right_hip[0]) / 2) - ((left_ankle[0] + right_ankle[0]) / 2))
+        plank_score = max(0.0, 60.0 - abs(body_angle - 180.0) * 0.45) + max(0.0, 25.0 - alignment_offset * 100)
+        scores["plank"] = plank_score
+
+    if left_shoulder and right_shoulder and left_elbow and right_elbow and left_wrist and right_wrist:
+        elbow_angle = _average([
+            calculate_angle(left_shoulder, left_elbow, left_wrist) if left_shoulder and left_elbow and left_wrist else 0,
+            calculate_angle(right_shoulder, right_elbow, right_wrist) if right_shoulder and right_elbow and right_wrist else 0,
+        ])
+        pushup_score = max(0.0, 65.0 - abs(elbow_angle - 95.0) * 0.75)
+        if left_hip and right_hip:
+            hip_center_x = (left_hip[0] + right_hip[0]) / 2
+            shoulder_center_x = (left_shoulder[0] + right_shoulder[0]) / 2
+            pushup_score += max(0.0, 20.0 - abs(hip_center_x - shoulder_center_x) * 120)
+        scores["pushup"] = pushup_score
+
+    if left_shoulder and right_shoulder and left_hip and right_hip and left_knee and right_knee and left_ankle and right_ankle:
+        body_angle = _average([
+            calculate_angle(left_shoulder, left_hip, left_knee) if left_shoulder and left_hip and left_knee else 0,
+            calculate_angle(right_shoulder, right_hip, right_knee) if right_shoulder and right_hip and right_knee else 0,
+        ])
+        knee_angle = _average([
+            calculate_angle(left_hip, left_knee, left_ankle) if left_hip and left_knee and left_ankle else 0,
+            calculate_angle(right_hip, right_knee, right_ankle) if right_hip and right_knee and right_ankle else 0,
+        ])
+        deadlift_score = 60.0 - abs(body_angle - 150.0) * 0.4 - max(0.0, knee_angle - 120.0) * 0.25
+        if knee_angle <= 120:
+            deadlift_score += 10.0
+        if knee_angle > 160:
+            deadlift_score -= 25.0
+        scores["deadlift"] = max(0.0, deadlift_score)
+
+    if not scores:
+        return {"status": "bad", "score": 0, "message": "Не удалось определить упражнение по ключевым точкам", "details": {}, "exercise": "auto"}
+
+    best_exercise = max(scores, key=scores.get)
+    best_result = _evaluate_exercise_by_key(landmarks, best_exercise)
+    best_result["exercise"] = best_exercise
+    return best_result
+
+
+def _validate_selected_exercise(landmarks: Dict[str, Tuple[float, float]], exercise: str) -> Dict[str, Any] | None:
+    selected_key = _normalize_exercise_key(exercise)
+    if selected_key == "auto":
+        return None
+
+    auto_result = detect_best_exercise(landmarks)
+    detected_key = _normalize_exercise_key(auto_result.get("exercise", "auto"))
+
+    if detected_key in {"auto", selected_key}:
+        return None
+
+    selected_label = _exercise_label(selected_key)
+    detected_label = _exercise_label(detected_key)
+    detected_score = float(auto_result.get("score", 0.0) or 0.0)
+    return {
+        "status": "warning" if detected_score >= 60 else "bad",
+        "score": round(max(0.0, min(100.0, detected_score)), 1),
+        "message": f"На фото больше похоже на {detected_label}, а не на {selected_label}",
+        "issues": [f"Вы выбрали {selected_label}, но на фото больше похоже на {detected_label}."] ,
+        "advice": ["Выберите соответствующее упражнение или включите режим auto."],
+        "details": {
+            "selected_exercise": selected_key,
+            "detected_exercise": detected_key,
+            "detected_score": round(detected_score, 1),
+        },
+        "exercise": detected_key,
+    }
+
+
+def analyze_pose_landmarks(landmarks: Dict[str, Tuple[float, float]], exercise: str) -> Dict[str, Any]:
+    exercise_key = _normalize_exercise_key(exercise)
+    if exercise_key == "auto":
+        return detect_best_exercise(landmarks)
+
+    mismatch_result = _validate_selected_exercise(landmarks, exercise_key)
+    if mismatch_result is not None:
+        return mismatch_result
+
+    return _evaluate_exercise_by_key(landmarks, exercise_key)
 
 
 def analyze_image_file(file_path: str | Path, exercise: str = "squat") -> Dict[str, Any]:
@@ -271,7 +621,8 @@ def analyze_image_file(file_path: str | Path, exercise: str = "squat") -> Dict[s
     if not landmarks:
         return {"status": "bad", "score": 0, "message": "На изображении не найден человек", "details": {}}
 
-    return {**analyze_pose_landmarks(landmarks, exercise), "exercise": exercise}
+    result = analyze_pose_landmarks(landmarks, exercise)
+    return {**result, "exercise": result.get("exercise", exercise)}
 
 
 def analyze_video_file(file_path: str | Path, exercise: str = "squat") -> Dict[str, Any]:
@@ -295,7 +646,8 @@ def analyze_video_file(file_path: str | Path, exercise: str = "squat") -> Dict[s
 
         landmarks = _detect_pose_landmarks(frame)
         if landmarks:
-            samples.append(analyze_pose_landmarks(landmarks, exercise))
+            frame_result = detect_best_exercise(landmarks) if exercise.lower().replace("_", "-") == "auto" else analyze_pose_landmarks(landmarks, exercise)
+            samples.append(frame_result)
 
         if len(samples) >= 5:
             break
@@ -303,16 +655,44 @@ def analyze_video_file(file_path: str | Path, exercise: str = "squat") -> Dict[s
     cap.release()
 
     if not samples:
-        return {"status": "bad", "score": 0, "message": "В видео не удалось обнаружить человека", "details": {"frames_processed": frames}, "exercise": exercise}
+        return {
+            "status": "bad",
+            "score": 0,
+            "message": "В видео не удалось обнаружить человека",
+            "details": {"frames_processed": frames},
+            "exercise": exercise,
+            "issues": ["На видео не найден человек"],
+            "advice": ["Попробуйте другое видео с более широким ракурсом и хорошим освещением."],
+        }
+
+    exercise_key = exercise.lower().replace("_", "-")
+    if exercise_key == "auto":
+        detected_exercise = max(
+            ((sample.get("exercise", "squat"), sample["score"]) for sample in samples),
+            key=lambda item: item[1],
+        )[0]
+        samples = [sample for sample in samples if sample.get("exercise", "squat") == detected_exercise]
 
     score = _average(item["score"] for item in samples)
     statuses = {item["status"] for item in samples}
     status = "good" if "bad" not in statuses and score >= 75 else "warning" if score >= 55 else "bad"
+
+    unique_issues: List[str] = []
+    advice: List[str] = []
+    for item in samples:
+        for issue in item.get("issues", []) or []:
+            if issue not in unique_issues:
+                unique_issues.append(issue)
+        for tip in item.get("advice", []) or []:
+            if tip not in advice:
+                advice.append(tip)
 
     return {
         "status": status,
         "score": round(score, 1),
         "message": "Видео соответствует технике упражнения" if status == "good" else "Проверяйте положение корпуса и суставов",
         "details": {"frames_processed": frames, "sample_count": len(samples)},
-        "exercise": exercise,
+        "exercise": detected_exercise if exercise_key == "auto" else exercise,
+        "issues": unique_issues,
+        "advice": advice or ["Проверяйте ровность корпуса и стабильность движения по всей амплитуде."],
     }

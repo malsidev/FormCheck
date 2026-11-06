@@ -9,6 +9,23 @@ const detailStatus = document.getElementById('detail-status');
 const detailFile = document.getElementById('detail-file');
 const detailExercise = document.getElementById('detail-exercise');
 const feedbackList = document.getElementById('feedback-list');
+const uploadedPreview = document.getElementById('uploaded-preview');
+const uploadedVideo = document.getElementById('uploaded-video');
+
+function getExerciseLabel(exercise) {
+  const labels = {
+    auto: 'Определить автоматически',
+    squat: 'Присед',
+    'push-up': 'Отжимание',
+    pushup: 'Отжимание',
+    plank: 'Планка',
+    lunge: 'Выпад',
+    lunges: 'Выпад',
+    deadlift: 'Тяга',
+  };
+
+  return labels[exercise] || exercise;
+}
 
 async function loadExercises() {
   const response = await fetch('/api/exercises');
@@ -18,20 +35,64 @@ async function loadExercises() {
   data.exercises.forEach((exercise) => {
     const option = document.createElement('option');
     option.value = exercise;
-    option.textContent = exercise === 'squat' ? 'Присед' : 'Отжимание';
+    option.textContent = getExerciseLabel(exercise);
+    if (exercise === 'auto') {
+      option.selected = true;
+    }
     exerciseSelect.appendChild(option);
   });
 }
 
-function updateResultCard(status, score, message, advice = []) {
+function showUploadedPreview(file) {
+  uploadedPreview.src = '';
+  uploadedPreview.style.display = 'none';
+  uploadedVideo.src = '';
+  uploadedVideo.style.display = 'none';
+  uploadedVideo.removeAttribute('src');
+
+  if (!file) {
+    return;
+  }
+
+  if (file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      uploadedPreview.src = event.target.result;
+      uploadedPreview.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+    return;
+  }
+
+  if (file.type.startsWith('video/')) {
+    uploadedVideo.src = URL.createObjectURL(file);
+    uploadedVideo.style.display = 'block';
+    uploadedVideo.load();
+  }
+}
+
+function updateResultCard(status, score, message, advice = [], issues = []) {
   resultCard.className = `result-card ${status}`;
   scoreValue.textContent = `${score ?? 0}%`;
-  statusText.textContent = status === 'good' ? 'Техника в норме' : status === 'warning' ? 'Есть замечания по технике' : 'Техника требует корректировки';
-  messageText.textContent = message || 'Результат готов.';
+
+  const normalizedMessage = message || 'Результат готов.';
+  const recommendations = Array.isArray(advice) && advice.length ? advice : (Array.isArray(issues) ? issues : []);
+
+  if (status === 'good') {
+    statusText.textContent = 'Техника в норме';
+    messageText.textContent = normalizedMessage === 'Техника приседа в норме' || normalizedMessage === 'Техника отжиманий нормальная' || normalizedMessage === 'Планка выполнена ровно' || normalizedMessage === 'Выпад выполнен уверенно' || normalizedMessage === 'Техника тяги в норме' ? normalizedMessage : 'Техника упражнения выполнена в корректной форме.';
+  } else if (status === 'warning') {
+    statusText.textContent = 'Есть замечания по технике';
+    messageText.textContent = normalizedMessage || 'Есть небольшие отклонения от правильной техники.';
+  } else {
+    statusText.textContent = 'Техника требует корректировки';
+    messageText.textContent = normalizedMessage || 'Нужно скорректировать технику упражнения.';
+  }
+
   detailStatus.textContent = status;
 
-  if (advice && advice.length) {
-    feedbackList.innerHTML = advice.map((item) => `<li>${item}</li>`).join('');
+  if (recommendations.length) {
+    feedbackList.innerHTML = recommendations.map((item) => `<li>${item}</li>`).join('');
   } else {
     feedbackList.innerHTML = '<li>Замечаний не найдено. Сохраняйте текущую форму.</li>';
   }
@@ -46,9 +107,11 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
+  showUploadedPreview(file);
+
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('exercise', exerciseSelect.value);
+  formData.append('exercise', exerciseSelect.value || 'auto');
 
   try {
     const response = await fetch('/api/analyze', {
@@ -57,13 +120,22 @@ form.addEventListener('submit', async (event) => {
     });
 
     const result = await response.json();
-    updateResultCard(result.status, result.score, result.message, result.advice || []);
+    updateResultCard(result.status, result.score, result.message, result.advice || [], result.issues || []);
     detailFile.textContent = result.filename || file.name;
-    detailExercise.textContent = result.exercise || exerciseSelect.value;
+    detailExercise.textContent = getExerciseLabel(result.exercise || exerciseSelect.value);
+
+    if (result.uploaded_image) {
+      uploadedPreview.src = result.uploaded_image;
+      uploadedPreview.style.display = 'block';
+    } else if (file.type.startsWith('video/')) {
+      uploadedVideo.src = URL.createObjectURL(file);
+      uploadedVideo.style.display = 'block';
+      uploadedVideo.load();
+    }
   } catch (error) {
     updateResultCard('bad', 0, 'Не удалось выполнить анализ. Проверьте файл и попробуйте ещё раз.', ['Проверьте файл и повторите загрузку.']);
     detailFile.textContent = file.name;
-    detailExercise.textContent = exerciseSelect.value;
+    detailExercise.textContent = getExerciseLabel(exerciseSelect.value);
     console.error(error);
   }
 });

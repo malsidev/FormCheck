@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 from pathlib import Path
 
@@ -27,7 +28,7 @@ async def health() -> dict:
 
 @app.get("/api/exercises")
 async def exercises() -> dict:
-    return {"exercises": list(SUPPORTED_EXERCISES)}
+    return {"exercises": ["auto", *list(SUPPORTED_EXERCISES)]}
 
 
 @app.get("/")
@@ -41,14 +42,16 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 @app.post("/api/analyze")
 async def analyze(
     file: UploadFile = File(...),
-    exercise: str = Form("squat"),
+    exercise: str = Form("auto"),
 ) -> dict:
     file_name = file.filename or "upload"
     suffix = Path(file_name).suffix.lower()
     image_suffixes = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+    normalized_exercise = (exercise or "auto").strip() or "auto"
+    allowed = ["auto", *list(SUPPORTED_EXERCISES)]
 
-    if exercise.lower().replace("_", "-") not in {item.lower().replace("_", "-") for item in SUPPORTED_EXERCISES}:
-        return {"status": "bad", "score": 0, "message": "Упражнение не поддерживается", "details": {"allowed": list(SUPPORTED_EXERCISES)}}
+    if normalized_exercise.lower().replace("_", "-") not in {item.lower().replace("_", "-") for item in allowed}:
+        return {"status": "bad", "score": 0, "message": "Упражнение не поддерживается", "details": {"allowed": allowed}}
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
         content = await file.read()
@@ -57,9 +60,14 @@ async def analyze(
 
     try:
         if suffix in image_suffixes:
-            result = analyze_image_file(temp_path, exercise=exercise)
+            image_media_type = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+            if suffix == ".webp":
+                image_media_type = "image/webp"
+            result = analyze_image_file(temp_path, exercise=normalized_exercise)
+            result["uploaded_image"] = f"data:{image_media_type};base64,{base64.b64encode(content).decode('ascii')}"
         else:
-            result = analyze_video_file(temp_path, exercise=exercise)
+            result = analyze_video_file(temp_path, exercise=normalized_exercise)
+            result["uploaded_image"] = ""
         result["filename"] = file_name
         return result
     finally:

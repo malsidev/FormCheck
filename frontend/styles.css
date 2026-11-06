@@ -134,6 +134,27 @@ button:hover {
   margin-bottom: 28px;
 }
 
+.uploaded-preview-box {
+  display: flex;
+  justify-content: center;
+  margin-top: 22px;
+}
+
+.uploaded-preview,
+.uploaded-video {
+  display: none;
+  width: min(100%, 420px);
+  max-height: 360px;
+  object-fit: cover;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.35);
+}
+
+.uploaded-video {
+  background: rgba(2, 6, 23, 0.9);
+}
+
 .result-card.good {
   border-color: rgba(52, 211, 153, 0.55);
   background: rgba(6, 78, 59, 0.2);
